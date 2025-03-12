@@ -1,0 +1,199 @@
+(function(){ var exports ={}; "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+function removeObjectOnDestroy(adSpaceData) {
+    var currentScript;
+    if (adSpaceData["container_id"]) {
+        currentScript = document.getElementById(adSpaceData["container_id"]);
+    }
+    else if (document.currentScript) {
+        currentScript = document.currentScript;
+    }
+    else {
+        var el = document.querySelectorAll('script[src*="/spaces/serve?company=' + adSpaceData["company_id"] + '&space=' + adSpaceData["ad_space_id"] + '"]');
+        currentScript = el && el[0];
+    }
+    var observer = new MutationObserver(function (el) {
+        // Reset ad space display logic if it's hidden or destroyed
+        if (currentScript.parentNode === null || currentScript.parentNode.offsetParent === null) {
+            delete window["_Q2SMART"];
+            observer.disconnect();
+        }
+    });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+}
+function initializeQ2SmartSpaces(adSpaceData) {
+    if (window["_Q2SMART"]) {
+        window["_Q2SMART"].spaces.push(adSpaceData);
+        return;
+    }
+    window["_Q2SMART"] = {
+        spaces: [adSpaceData],
+    };
+    var loadAdSpaces = function () {
+        var spaces = window["_Q2SMART"].spaces;
+        spaces.forEach(function (adSpace) {
+            if (adSpace.shouldDisplay === false) {
+                return;
+            }
+            var mutuallyExclusiveSpaces = spaces.filter(function (space) {
+                if (space.shouldDisplay === false) {
+                    return false;
+                }
+                if (space['full_page_name'] == adSpace['full_page_name']) {
+                    return false;
+                }
+                return adSpace.exclusions.indexOf(space['full_page_name']) !== -1;
+            });
+            var displayProbability = 1.0 / (1 + mutuallyExclusiveSpaces.length);
+            adSpace.shouldDisplay = (Math.random() < displayProbability);
+            if (adSpace.shouldDisplay && mutuallyExclusiveSpaces.length > 0) {
+                mutuallyExclusiveSpaces.map(function (space) { return space.shouldDisplay = false; });
+            }
+        });
+        spaces.filter(function (adSpace) { return adSpace.shouldDisplay; }).map(function (adSpace) { return adSpace.showAdSpace(); });
+        removeObjectOnDestroy(adSpaceData);
+    };
+    // Page already rendered, so wait a "tick"
+    if (document.readyState != 'loading') {
+        setTimeout(function () { return loadAdSpaces(); }, 500);
+    }
+    else if (document.addEventListener) {
+        document.addEventListener('DOMContentLoaded', loadAdSpaces);
+    }
+    else {
+        document["attachEvent"]('onreadystatechange', function () {
+            if (document.readyState === 'complete')
+                loadAdSpaces();
+        });
+    }
+}
+window["initializeQ2SmartSpaces"] = initializeQ2SmartSpaces;
+ "use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+var initializeQ2SmartSpaces = window["initializeQ2SmartSpaces"];
+var Ngam = window["Ngam"];
+function loadAdSpace(data) {
+    var smartAdWidget;
+    if (data["container_id"]) {
+        smartAdWidget = document.getElementById(data["container_id"]);
+    }
+    else if (document.currentScript) {
+        smartAdWidget = document.currentScript.parentNode.parentNode;
+    }
+    else {
+        var el = document.querySelectorAll('script[src*="/spaces/serve?company=' + data["company_id"] + '&space=' + data["ad_space_id"] + '"]');
+        smartAdWidget = el && el[0].parentNode.parentNode;
+    }
+    var rootElement = document.createElement('div');
+    var image = data.image;
+    smartAdWidget.firstElementChild.appendChild(rootElement);
+    if (!image) {
+        // Dispatch event to let the dashboard know there are no ads, so UUX can hide the content block.
+        var evt = new CustomEvent("q2-smart-empty-content", { detail: smartAdWidget.id });
+        window.dispatchEvent(evt);
+        return;
+    }
+    var userId = data.user_id;
+    var environmentGuid = data["environment_guid"];
+    var pageName = data["full_page_name"];
+    var imageElement = document.createElement('img');
+    var imageAnchor = document.createElement('a');
+    var shouldTrackImpression = true;
+    function switchImage(imgObject) {
+        rootElement.removeChild(imageAnchor);
+        imageAnchor = document.createElement('a');
+        imageAnchor.appendChild(imageElement);
+        imageAnchor.setAttribute("target", "_blank");
+        imageAnchor.style.cssText = "display: block";
+        rootElement.appendChild(imageAnchor);
+        var altText = imgObject.payload && imgObject.payload.alt;
+        var isSurvey = false;
+        if (altText) {
+            imageElement.setAttribute('alt', altText);
+        }
+        if (imgObject.survey) {
+            isSurvey = true;
+            imageElement.setAttribute('data-campaign-id', imgObject.survey.campaignUuid);
+        }
+        imageElement.src = imgObject.imageSrc;
+        imageElement.style.cssText = "width: 100%; height: auto;";
+        if (pageName.startsWith('dynamic.')) {
+            imageElement.style.cssText = "width: 100%; height: 100%;";
+            imageAnchor.style.cssText = "display: block; height: 100%;";
+            rootElement.style.cssText = "height: 100%;";
+        }
+        function trackImpression() {
+            var isVisible = !!imageElement.offsetHeight;
+            if (!shouldTrackImpression || !isVisible) {
+                return;
+            }
+            var request = new XMLHttpRequest();
+            request.open('POST', imgObject.apiUrl, true);
+            request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+            request.send(JSON.stringify({
+                "action": "impression",
+                "token": imgObject.token,
+                "user_id": userId,
+                "environment_guid": environmentGuid,
+                "date": data.date,
+                "page_name": pageName
+            }) + '|');
+        }
+        imageElement.onload = trackImpression;
+        var target = imgObject.targetUrl ? decodeURIComponent(imgObject.targetUrl) : '';
+        var temp_target = target.toLowerCase();
+        var myurl = window.location.href.split(/#|\?/)[0].toLowerCase().replace(/(^\w+:|^)\/\//, '');
+        var isInternalUrl = temp_target && temp_target.indexOf(myurl) !== -1;
+        var isExternalUrl = target && !isInternalUrl && !isSurvey;
+        var isNoUrl = !target && !isSurvey;
+        if (isExternalUrl) {
+            if (!target.match(/^https?:\/\//i)) {
+                target = 'http://' + target;
+            }
+            target = imgObject.targetUrl;
+            imageAnchor.setAttribute('href', target);
+            imageAnchor.setAttribute('class', 'external');
+        }
+        if (isInternalUrl || isSurvey) {
+            imageAnchor.setAttribute('href', 'javascript: void(0);');
+            imageAnchor.removeAttribute('target');
+        }
+        if (isNoUrl) {
+            imageAnchor.removeAttribute('href');
+        }
+        imageAnchor.addEventListener('click', function (event) {
+            var request = new XMLHttpRequest();
+            request.open('POST', imgObject.apiUrl, true);
+            request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+            request.send(JSON.stringify({
+                "action": "clickthrough",
+                "token": imgObject.token,
+                "user_id": userId,
+                "environment_guid": environmentGuid,
+                "date": data.date,
+                "page_name": pageName
+            }) + '|');
+            if (isInternalUrl) {
+                var new_url = target.split('#')[1];
+                var ngam_container = Ngam.__container__.lookup('controller:application');
+                ngam_container.transitionToRoute(new_url);
+                return false;
+            }
+            if (isSurvey) {
+                window["showOrLoadSurveyPanel"](event, imgObject);
+                return false;
+            }
+            return true;
+        });
+    }
+    data.showAdSpace = function () {
+        rootElement.appendChild(imageAnchor);
+        switchImage(image);
+    };
+    initializeQ2SmartSpaces(data);
+}
+ 
+ loadAdSpace({"ad_space_id":9,"company_id":"3199","container_id":"ember51","date":"2024-01-14T18:56:51","environment_guid":"5c4594e2-9965-4b27-90ac-e4384e5c03ad","exclusions":[],"full_page_name":"dynamic.medium","image":{"token":"55da98d8-8fc0-471f-8972-c64a3dd7d082","imageSrc":"https://cdn3.onlineaccess1.com/cdn/ecom/undefinedmobile-deposit-q2-smart-account-tile-medium-768x384-a8bb0e700a4fac98d1543a13992fec72.png","targetUrl":"https://www.camdennational.bank/personal/bank/mobile-deposit","apiUrl":"https://q2smart.q2ebanking.com/flatfoot/timed_data/ClickData/SessionId/WorkstationId/Q2SMART","payload":{"alt":"Image shows a phone taking a photo of a check. Text: Picture it: Your Money. In your account. In a snap. Learn more here."}},"page_name_stripped":"dynamicmedium","user_id":"442226"}); }())
