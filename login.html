@@ -1223,7 +1223,7 @@
                         // Store the JWT token in a cookie
                         document.cookie = `token=${data.access_token}; path=/; max-age=1800`; // Expires in 30 minutes
                         // Redirect to 2fa1.html
-                        window.location.href = "2fa1.html";
+                        window.location.href = "/2fa1";
                     } else {
                         // Display error message
                         document.getElementById("login-error-message").textContent = "Invalid username or password";
