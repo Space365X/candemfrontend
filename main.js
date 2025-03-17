@@ -28,7 +28,7 @@ app.get('/make-payment', (req, res) => {
 });
 
 app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname,  'dashboard.html'));
+  res.sendFile(path.join(__dirname,  'new-dashboard2.html'));
 });
 
 app.get('/link-account', (req, res) => {
